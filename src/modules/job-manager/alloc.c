@@ -657,10 +657,15 @@ static void dyn_alloc_response_completion (flux_future_t *f, void *arg)
 
     flux_log(ctx->h, LOG_DEBUG, "received allocation response from paren/scheduler");
 
-    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before forwarding response to shell */
+    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before
+     * forwarding response to shell 
+     */
 
     if (flux_rpc_get_unpack (f, "{s:O}", "data", &xdata) < 0){
-        flux_log(ctx->h, LOG_WARNING, "pmix-alloc request: %s", future_strerror (f, errno));
+        flux_log(ctx->h,
+                LOG_WARNING,
+                "pmix-alloc request: %s",
+                future_strerror (f, errno));
         flux_respond_error(ctx->h, ctx->msg, -1, "unable to unpack response");
         goto out;
     }
@@ -693,44 +698,64 @@ static void dyn_alloc_request (flux_t *h,
     struct alloc *alloc = job_ctx->alloc;
     struct alloc_ctx *ctx; 
     flux_future_t *f = NULL;
-    int directive;
+    int directive, target;
 
     flux_log (h, LOG_DEBUG, "recived allocation request");
 
-    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before forwarding request to parent/scheduler */
+    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before 
+     * forwarding request to parent/scheduler 
+     */
 
     ctx = calloc(1, sizeof(*ctx));
     ctx->h = h;
     ctx->msg = flux_msg_incref(msg);
 
-    if (flux_msg_unpack (msg, "{s:i s:O}", "directive", &directive, "data", &xdata) < 0){
+    if (flux_msg_unpack (msg,
+                        "{s:i s:i s:O}",
+                        "target", &target,
+                        "directive", &directive,
+                        "data", &xdata) < 0){
         error_msg = "failed to unpack request data";
         flux_log_error (h, "%s: %s", __FUNCTION__, error_msg);
         goto error;
     }
 
-    if(alloc->parent_instance){
-
-        flux_log (h, LOG_DEBUG, "forwarding allocation request to parent instance");
+    /* Request is intended for an inmstaces higher up in the hierarchy */
+    if(0 < target){
         
-        /* forward to parent instance */
-        if( !(f = flux_rpc_pack(alloc->parent_instance, 
-                    "job-manager.dyn_alloc_request", 
-                    FLUX_NODEID_ANY, 
-                    0, 
-                    "{s:i s:O}",
-                    "directive", directive,
-                    "data", xdata )) 
-            || flux_future_then (f,
-                                 -1,
-                                 dyn_alloc_response_completion,
-                                 (void *) ctx) < 0) 
-        {
-            error_msg = "failed to send allocation to parent instance";
-            flux_log (h, LOG_DEBUG, error_msg);
-            goto error;
+        if(alloc->parent_instance){
+
+            flux_log (h, LOG_DEBUG, "forwarding allocation request to parent instance");
+            
+            /* forward to parent instance */
+            if( !(f = flux_rpc_pack(alloc->parent_instance, 
+                        "job-manager.dyn_alloc_request", 
+                        FLUX_NODEID_ANY, 
+                        0, 
+                        "{s:i s:i s:O}",
+                        "target", target - 1,
+                        "directive", directive,
+                        "data", xdata )) 
+                || flux_future_then (f,
+                                     -1,
+                                     dyn_alloc_response_completion,
+                                     (void *) ctx) < 0) 
+            {
+                error_msg = "failed to send allocation to parent instance";
+                flux_log (h, LOG_DEBUG, error_msg);
+                goto error;
+            }
+            flux_log (  ctx->h, 
+                        LOG_DEBUG, 
+                        "forwarded allocation request to parent instance");
+        }else{
+            /* Forwarding to parent requested but no parent available. */
+            flux_respond_error( h, 
+                                msg, 
+                                -1, 
+                                "No parent available");
         }
-        flux_log (ctx->h, LOG_DEBUG, "forwarded allocation request to parent instance");
+    /* Request is intended for our instance, so forward to scheduler */
     }else if(alloc->scheduler_is_online){
         
         /* forward to scheduler */
@@ -752,7 +777,7 @@ static void dyn_alloc_request (flux_t *h,
         }
         flux_log (ctx->h, LOG_DEBUG, "forwarded allocation request to scheduler");
     }else{
-        error_msg = "failed to forward request: no scheduler or parent instance found";
+        error_msg = "failed to forward request: no  local scheduler found";
         flux_log_error (h, "%s: %s", __FUNCTION__, error_msg);
         goto error;
     }
