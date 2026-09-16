@@ -522,6 +522,17 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
             request.gpu_per_slot,
         )
 
+    # TODO: this is a hack, we should re-factor so that alloc and alloc_add 
+    # call the same code for finding resources, but modify allocation state
+    # independently
+    def alloc_add(self, jobid: int, request) -> "Rv1Pool":
+        (end_time, prev_R) = self._job_state[jobid]
+        add_R = self.alloc(jobid, request)
+        new_R = prev_R.union(add_R)
+        self._job_state[jobid] = (end_time, new_R)
+        self._bump()
+        return new_R
+
     def alloc(self, jobid: int, request) -> "Rv1Pool":
         """Allocate resources for *jobid* matching *request*.
 

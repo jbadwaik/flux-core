@@ -232,6 +232,22 @@ class FIFOScheduler(Scheduler):
         job.request.success(alloc, {"sched": {"resource_summary": summary}})
         return True
 
+    def _handle_dyn_alloc_request(self, msg):
+        p = msg.payload
+        jobid = p["id"]
+        jobspec = p["jobspec"]
+        try:
+            rr = self.resources.parse_resource_request(jobspec)
+            R = self.resources.alloc_add(jobid, rr)
+            self.dyn_alloc_success(msg, R)
+        except InsufficientResources:
+            self.dyn_alloc_deny(msg)
+        except InfeasibleRequest as exc:
+            # TODO: log something
+            self.dyn_alloc_deny(msg)
+        except Exception as exc:
+            self.log.error(f"alloc-add callback raised: {exc}")
+            self.stop_error()
 
 def mod_main(h, *args):
     FIFOScheduler(h, *args).run()

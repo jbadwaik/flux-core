@@ -698,6 +698,76 @@ class Scheduler(BrokerModule):
         )
 
     # ------------------------------------------------------------------
+    # Dyn Alloc response implementation (called directly)
+    # ------------------------------------------------------------------
+
+    def dyn_alloc_success(self, msg, R, annotations=None):
+        """Commit R to KVS and send an alloc success response.
+
+        Typically called via :meth:`AllocRequest.success`.  *R* must be a
+        dict (parsed R JSON object).  The alloc response to job-manager is
+        sent only after R is safely stored in KVS.
+
+        Args:
+            msg: The alloc request :class:`~flux.message.Message`.
+            R (dict): The allocated resource set as a parsed JSON object.
+            annotations (dict, optional): Scheduler annotations to include.
+        """
+        jobid = msg.payload["job id"]
+
+        # Compute KVS key: job.<f58id>.R
+        buf = ffi.new("char[128]")
+        if lib.flux_job_kvs_key(buf, 128, jobid, b"R") < 0:
+            raise OSError("flux_job_kvs_key failed")
+        key = ffi.string(buf).decode()
+
+        txn = KVSTxn(self.handle)
+        txn.put(key, R)
+        f = kvs_commit_async(self.handle, _kvstxn=txn)
+        f.then(self._dyn_alloc_commit_continuation, (msg, R, annotations))
+
+    def _dyn_alloc_commit_continuation(self, future, args):
+        """Send the alloc response after the KVS commit completes."""
+        msg, R_dict, annotations = args
+        try:
+            future.get()
+        except OSError as exc:
+            self.log(syslog.LOG_ERR, f"alloc: KVS commit failed: {exc}")
+            self.stop_error()
+            return
+        resp = {"job id": msg.payload["job id"], "type": 0, "R": R_dict}
+        self.handle.respond(msg, resp)
+
+    def dyn_alloc_deny(self, msg, note=None):
+        """Send an alloc denial response.  Typically called via :meth:`AllocRequest.deny`.
+
+        Args:
+            msg: The alloc request :class:`~flux.message.Message`.
+            note (str, optional): Human-readable reason for the denial.
+        """
+        resp = {"job id": msg.payload["job id"], "type": 1}
+        if note is not None:
+            resp["note"] = note
+        self.handle.respond(msg, resp)
+
+    def dyn_alloc_cancel(self, msg):
+        """Send an alloc cancel response.  Typically called via :meth:`AllocRequest.cancel`.
+
+        Args:
+            msg: The original alloc request :class:`~flux.message.Message`.
+        """
+        self.handle.respond(msg, {"id": msg.payload["job id"], "type": 2})
+
+    def dyn_alloc_annotate(self, msg, annotations):
+        """Send an alloc annotation update.  Typically called via :meth:`AllocRequest.annotate`.
+
+        Args:
+            msg: The alloc request :class:`~flux.message.Message`.
+            annotations (dict): Annotation dict to attach to the job.
+        """
+        pass
+
+    # ------------------------------------------------------------------
     # Override points
     # ------------------------------------------------------------------
 
@@ -926,16 +996,26 @@ class Scheduler(BrokerModule):
 
     @request_handler("sched.dyn_alloc_request", prefix=False)
     def _handle_dyn_alloc_request(self, msg):
-        self.log(syslog.LOG_DEBUG, f"dyn_alloc_request callback called")
+        self.dyn_alloc_deny(msg)
+        return
+        self.log(syslog.LOG_INFO, f"dyn_alloc_request callback called")
+        p = msg.payload
+        jobid = p["job id"]
+        jobspec_add = p["spec_add"]
         try:
-            self.log(syslog.LOG_DEBUG, str(msg.payload))
-            p = msg.payload
-            data = p["data"]
+            rr = self.resources.parse_resource_request(jobspec_add)
+            R = self.resources.alloc_add(jobid, rr)
+            self.dyn_alloc_success(msg, R)
+        except InsufficientResources:
+            pass
+        except:
+            pass
+        try:            
             resp = {
-                "data": data,
+                "type": 1, # DENY
             }
             rc = self.handle.respond(msg, resp)
-            self.log(syslog.LOG_DEBUG, f"respond returned "+str(rc))
+            self.log(syslog.LOG_INFO, f"respond returned "+str(rc))
         except Exception as exc:
             self.log(syslog.LOG_ERR, f"dyn_alloc callback raised: {exc}")
             self.stop_error()
