@@ -139,7 +139,7 @@ class ResourcePool:
         return ResourcePool(self.impl.alloc(jobid, request))
 
     def alloc_add(self, jobid: int, request) -> "ResourcePool":
-        return ResourcePool(self.impl.alloc(jobid, request))
+        return ResourcePool(self.impl.alloc_add(jobid, request))
 
     def check_feasibility(self, request) -> None:
         """Check whether *request* is structurally satisfiable."""
