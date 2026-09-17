@@ -713,7 +713,7 @@ class Scheduler(BrokerModule):
             R (dict): The allocated resource set as a parsed JSON object.
             annotations (dict, optional): Scheduler annotations to include.
         """
-        jobid = msg.payload["job id"]
+        jobid = msg.payload["jobid"]
 
         # Compute KVS key: job.<f58id>.R
         buf = ffi.new("char[128]")
@@ -735,7 +735,7 @@ class Scheduler(BrokerModule):
             self.log(syslog.LOG_ERR, f"alloc: KVS commit failed: {exc}")
             self.stop_error()
             return
-        resp = {"job id": msg.payload["job id"], "type": 0, "R": R_dict}
+        resp = {"jobid": msg.payload["jobid"], "type": 0, "R": R_dict}
         self.handle.respond(msg, resp)
 
     def dyn_alloc_deny(self, msg, note=None):
@@ -997,28 +997,6 @@ class Scheduler(BrokerModule):
     @request_handler("sched.dyn_alloc_request", prefix=False)
     def _handle_dyn_alloc_request(self, msg):
         self.dyn_alloc_deny(msg)
-        return
-        self.log(syslog.LOG_INFO, f"dyn_alloc_request callback called")
-        p = msg.payload
-        jobid = p["job id"]
-        jobspec_add = p["spec_add"]
-        try:
-            rr = self.resources.parse_resource_request(jobspec_add)
-            R = self.resources.alloc_add(jobid, rr)
-            self.dyn_alloc_success(msg, R)
-        except InsufficientResources:
-            pass
-        except:
-            pass
-        try:            
-            resp = {
-                "type": 1, # DENY
-            }
-            rc = self.handle.respond(msg, resp)
-            self.log(syslog.LOG_INFO, f"respond returned "+str(rc))
-        except Exception as exc:
-            self.log(syslog.LOG_ERR, f"dyn_alloc callback raised: {exc}")
-            self.stop_error()
 
     # ------------------------------------------------------------------
     # RFC 27 sched message handlers (registered by BrokerModule)

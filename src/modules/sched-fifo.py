@@ -32,6 +32,7 @@ messages (default ``err``; use ``debug`` for verbose output).
 
 import heapq
 import time as _time
+import syslog
 
 from _flux._core import lib
 from flux.resource import InfeasibleRequest, InsufficientResources
@@ -234,11 +235,13 @@ class FIFOScheduler(Scheduler):
 
     def _handle_dyn_alloc_request(self, msg):
         p = msg.payload
-        jobid = p["id"]
-        jobspec = p["jobspec"]
+        jobid = p["jobid"]
+        jobspec = p["spec_add"]
         try:
             rr = self.resources.parse_resource_request(jobspec)
-            R = self.resources.alloc_add(jobid, rr)
+            R = self._resources.alloc_add(jobid, rr)
+            if not isinstance(R, dict):
+                R = R.to_dict()
             self.dyn_alloc_success(msg, R)
         except InsufficientResources:
             self.dyn_alloc_deny(msg)
@@ -246,7 +249,7 @@ class FIFOScheduler(Scheduler):
             # TODO: log something
             self.dyn_alloc_deny(msg)
         except Exception as exc:
-            self.log.error(f"alloc-add callback raised: {exc}")
+            self.log(syslog.LOG_ERR, f"alloc-add callback raised: {exc}")
             self.stop_error()
 
 def mod_main(h, *args):
