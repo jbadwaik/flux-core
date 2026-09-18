@@ -36,7 +36,6 @@
 
 #include <unistd.h>
 #include <string.h>
-#include <jansson.h>
 
 #include "src/common/libjob/idf58.h"
 #include "ccan/str/str.h"
@@ -449,20 +448,6 @@ static void exit_cb (struct bulk_exec *exec,
 
     ctx->exit_count++;
 
-    /* Check if any release reqs are now complete */
-    struct bulk_exec_release_req *req = zlist_first (bulk_exec_get_release_reqs(exec));
-    while (req) {
-        if(bulk_exec_release_complete(req) && !bulk_exec_release_reported(req)){
-            /* TODO */
-            bulk_exec_release_report(req);
-            flux_log (job->h, LOG_DEBUG, "exit_cb bulk_exec_release req is complete");
-            jobinfo_tasks_complete (job,
-                            req->idset,
-                            bulk_exec_rc (exec));
-        }
-        req = zlist_next (bulk_exec_get_release_reqs(exec));
-    }
-
     /*  Check if a shell is exiting before the first barrier, in which
      *   case we raise a job exception because the shell or IMP may not
      *   have had a chance to do so.
@@ -809,17 +794,6 @@ static int exec_cancel (struct jobinfo *job)
     return bulk_exec_cancel (exec);
 }
 
-static int exec_release (struct jobinfo *job, char *alloc_id, struct resource_set *rset)
-{
-    struct bulk_exec *exec = job->data;
-    const struct idset *ranks = NULL; 
-    flux_log (job->h, LOG_DEBUG, "exec_release (impl)");
-
-    ranks = resource_set_ranks (rset);
-    flux_log (job->h, LOG_DEBUG, "exec_release calling: bulk_exec_release");
-    return bulk_exec_release (exec, alloc_id, ranks);
-}
-
 static void exec_exit (struct jobinfo *job)
 {
     struct bulk_exec *exec = job->data;
@@ -903,7 +877,6 @@ struct exec_implementation bulkexec = {
     .start =    exec_start,
     .kill =     exec_kill,
     .cancel =   exec_cancel,
-    .release = exec_release,
     .stats =    exec_stats,
     .active_ranks = active_ranks,
 };

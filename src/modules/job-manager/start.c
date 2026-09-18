@@ -85,7 +85,6 @@
 #include <flux/core.h>
 #include <assert.h>
 
-#include "src/common/librlist/rlist.h"
 #include "src/common/libjob/idf58.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "ccan/str/str.h"
@@ -93,7 +92,7 @@
 #include "job.h"
 #include "event.h"
 #include "raise.h"
-#include "alloc.h"
+
 #include "start.h"
 
 struct start {
@@ -249,7 +248,6 @@ static void start_response_cb (flux_t *h,
     else if (streq (type, "release")) {
         const char *idset;
         int final;
-        flux_log (h, LOG_DEBUG, "job manager send release");
         if (json_unpack (data,
                          "{s:s s:b}",
                          "ranks", &idset,
@@ -260,7 +258,6 @@ static void start_response_cb (flux_t *h,
         }
         if (final) // final release is end-of-stream
             job->start_pending = 0;
-
         if (event_job_post_pack (ctx->event,
                                  job,
                                  "release",
@@ -269,24 +266,6 @@ static void start_response_cb (flux_t *h,
                                  "ranks", idset,
                                  "final", final) < 0)
             goto error_post;
-
-        if(!final){
-            json_error_t error;
-            struct idset *release_ranks = idset_decode(idset);
-            struct rlist *original_list = rlist_from_json(job->R_redacted, &error);
-            struct rlist *remove_list = rlist_copy_ranks(original_list, release_ranks);
-            struct rlist *remaining_list = rlist_diff(original_list, remove_list);
-            alloc_send_free_request (ctx->alloc,
-                                 rlist_to_R(remove_list),
-                                 job->id,
-                                 final);
-            job->R_redacted = rlist_to_R(remaining_list);
-            idset_destroy(release_ranks);
-            rlist_destroy(original_list);
-            rlist_destroy(remove_list);
-            rlist_destroy(remaining_list);
-        }
-
     }
     else if (streq (type, "exception")) {
         int xseverity;

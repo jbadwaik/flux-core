@@ -63,7 +63,6 @@ struct exec_implementation {
     int  (*start)   (struct jobinfo *job);
     int  (*kill)    (struct jobinfo *job, int signum);
     int  (*cancel)  (struct jobinfo *job);
-    int  (*release)  (struct jobinfo *job, char *alloc_id, struct resource_set *rset);
     json_t * (*stats) (struct jobinfo *job);
     struct idset * (*active_ranks) (struct jobinfo *job);
 };

@@ -644,38 +644,38 @@ bool alloc_sched_ready (struct alloc *alloc)
     return alloc->scheduler_is_online;
 }
 
+struct realloc_ctx {
+    flux_t *h;
+    const flux_msg_t *msg;
+    struct job *job;
+};
+
 /* recives RESPONSE from scheduler/parent instance for dynamic allocation request. 
  * forwards response to requestor  
  * Note: arg is the original request msg
  */
 static void dyn_alloc_response_completion (flux_future_t *f, void *arg)
 {
-    json_t *xdata = NULL;
-    struct alloc_ctx *ctx = arg;
-    int rc;
+    struct realloc_ctx *ctx = arg;
+    flux_t *h = ctx->h;
+    flux_jobid_t jobid;
+    json_t *full_R = NULL;
+    //json_t *R_delta_add;
+    int type;
 
+    flux_log(h, LOG_DEBUG, "received realloc response from scheduler");
 
-    flux_log(ctx->h, LOG_DEBUG, "received allocation response from paren/scheduler");
-
-    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before
-     * forwarding response to shell 
-     */
-
-    if (flux_rpc_get_unpack (f, "{s:O}", "data", &xdata) < 0){
-        flux_log(ctx->h,
-                LOG_WARNING,
-                "pmix-alloc request: %s",
-                future_strerror (f, errno));
+    if (flux_rpc_get_unpack (f, "{s:i s:I, s:O}", "type", &type, "jobid", &jobid, "R", &full_R) < 0){
+        flux_log(ctx->h, LOG_WARNING, "pmix-alloc request: %s", future_strerror (f, errno));
         flux_respond_error(ctx->h, ctx->msg, -1, "unable to unpack response");
         goto out;
     }
 
-    if(0 > (rc = flux_respond_pack(ctx->h, ctx->msg,  "{s:O}", "data", xdata))){
-        flux_log(ctx->h, LOG_WARNING, "flux_respond_pack failed with %d", rc);
-        flux_respond_error(ctx->h, ctx->msg, -1, "unable to pack response");
-        goto out;
-    };
-    flux_log(ctx->h, LOG_DEBUG, "forwarded allocation response");
+    struct job *job = ctx->job;
+    (void)json_object_del (full_R, "scheduling");
+    job->R_redacted = full_R;
+
+    flux_respond_pack(h, ctx->msg, "{s:i s:O}", "type", type, "R", full_R);
 
 out:
     flux_msg_decref(ctx->msg);
@@ -692,106 +692,75 @@ static void dyn_alloc_request (flux_t *h,
                             const flux_msg_t *msg,
                             void *arg)
 {
-    json_t *xdata = NULL;
-    char *error_msg = NULL;
     struct job_manager *job_ctx = arg;
-    struct alloc *alloc = job_ctx->alloc;
-    struct alloc_ctx *ctx; 
+    struct realloc_ctx *ctx; 
     flux_future_t *f = NULL;
-    int directive, target;
+    int directive;
+    flux_jobid_t jobid;
+    json_t *jobspec_add = NULL;
+    struct job *job;
 
     flux_log (h, LOG_DEBUG, "recived allocation request");
 
-    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before 
-     * forwarding request to parent/scheduler 
-     */
+    /* TODO: DO whatever is necessary for LEVEL 'job_manager' before forwarding request to parent/scheduler */
 
     ctx = calloc(1, sizeof(*ctx));
     ctx->h = h;
     ctx->msg = flux_msg_incref(msg);
 
     if (flux_msg_unpack (msg,
-                        "{s:i s:i s:O}",
-                        "target", &target,
-                        "directive", &directive,
-                        "data", &xdata) < 0){
-        error_msg = "failed to unpack request data";
-        flux_log_error (h, "%s: %s", __FUNCTION__, error_msg);
-        goto error;
+            "{s:i s:I s:O}",
+            "directive",
+            &directive,
+            "jobid",
+            &jobid,
+            "spec_add",
+            &jobspec_add) < 0) {
+        flux_log_error (h, "%s: %s", __FUNCTION__, "failed to unpack request data");
+        flux_respond_error(h, msg, EINVAL, "failed to unpack request");
+        free(ctx);
+        return;
     }
 
-    /* Request is intended for an inmstaces higher up in the hierarchy */
-    if(0 < target){
-        
-        if(alloc->parent_instance){
-
-            flux_log (h, LOG_DEBUG, "forwarding allocation request to parent instance");
-            
-            /* forward to parent instance */
-            if( !(f = flux_rpc_pack(alloc->parent_instance, 
-                        "job-manager.dyn_alloc_request", 
-                        FLUX_NODEID_ANY, 
-                        0, 
-                        "{s:i s:i s:O}",
-                        "target", target - 1,
-                        "directive", directive,
-                        "data", xdata )) 
-                || flux_future_then (f,
-                                     -1,
-                                     dyn_alloc_response_completion,
-                                     (void *) ctx) < 0) 
-            {
-                error_msg = "failed to send allocation to parent instance";
-                flux_log (h, LOG_DEBUG, error_msg);
-                goto error;
-            }
-            flux_log (  ctx->h, 
-                        LOG_DEBUG, 
-                        "forwarded allocation request to parent instance");
-        }else{
-            /* Forwarding to parent requested but no parent available. */
-            flux_respond_error( h, 
-                                msg, 
-                                -1, 
-                                "No parent available");
-        }
-    /* Request is intended for our instance, so forward to scheduler */
-    }else if(alloc->scheduler_is_online){
-        
-        /* forward to scheduler */
-        if (!(f = flux_rpc_pack (ctx->h,
-                                 "sched.dyn_alloc_request",
-                                 0,
-                                 0,
-                                 "{s:O}",
-                                 "data", xdata))
-            ||  flux_future_then (f,
-                                 -1.,
-                                 dyn_alloc_response_completion,
-                                 (void *) ctx) < 0) 
-        {
-            error_msg = "failed to forward request to local scheduler";
-            flux_log_error (h, "%s: %s", __FUNCTION__, error_msg);
-            goto error;
+    if (!(job = zhashx_lookup (job_ctx->active_jobs, &jobid))) {
+        if (!(job = zhashx_lookup (job_ctx->inactive_jobs, &jobid))) {
+            flux_respond_error(h, msg, ENOENT, "unknown job id");
             return;
         }
-        flux_log (ctx->h, LOG_DEBUG, "forwarded allocation request to scheduler");
-    }else{
-        error_msg = "failed to forward request: no  local scheduler found";
-        flux_log_error (h, "%s: %s", __FUNCTION__, error_msg);
-        goto error;
+        else {
+            flux_respond_error(h, msg, EINVAL, "jo is inactive");
+            return;
+        }
+        return;
     }
 
-    json_decref (xdata);
-    return;
+    ctx->job = job;
 
-error:
-    if(f) flux_future_destroy (f);
-    if(xdata) json_decref (xdata);
-    flux_respond_error(h, msg, -1, error_msg);
+    f = flux_rpc_pack(h,
+        "sched.dyn_alloc_request",
+        FLUX_NODEID_ANY,
+        0,
+        "{s:i s:I s:o}",
+        "directive",
+        directive,
+        "jobid",
+        jobid,
+        "spec_add",
+        jobspec_add);
 
-    flux_msg_decref(ctx->msg);
-    free(ctx);
+    if (!f) {
+        flux_log_error(h, "%s:%s", __FUNCTION__, "Could not call sched.dyn_alloc_request");
+        free(ctx);
+        return;
+    }
+
+    if (flux_future_then(f, -1, dyn_alloc_response_completion, ctx) < 0) {
+        flux_log_error(h, "%s:%s", __FUNCTION__, "TODO");
+        free(ctx);
+        return;
+    }
+
+    // TODO: refcount on jobspec_add??
 }
 
 

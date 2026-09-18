@@ -16,11 +16,10 @@
 #include "src/common/libmissing/macros.h"
 #define EXIT_CODE(x) __W_EXITCODE(x,0)
 
-#include <jansson.h>
-
 #include <flux/core.h>
 #include <flux/idset.h>
 
+#include "src/common/libczmqcontainers/czmq_containers.h"
 #include "src/common/libutil/aux.h"
 #include "src/common/libjob/idf58.h"
 #include "ccan/str/str.h"
@@ -62,10 +61,6 @@ struct bulk_exec {
 
     zlist_t *commands;
     zlist_t *processes;
-
-    zlist_t *processes_terminated;
-
-    zlist_t *release_reqs;
 
     struct bulk_exec_ops *handlers;
     void *arg;
@@ -228,90 +223,6 @@ static void exit_batch_append (struct bulk_exec *exec, flux_subprocess_t *p)
         flux_watcher_start (exec->exit_batch_timer);
     }
 }
-
-zlist_t * bulk_exec_get_release_reqs(struct bulk_exec *exec){
-    return exec->release_reqs;
-}
-
-bool bulk_exec_release_reported(struct bulk_exec_release_req *req){
-    return req->reported;
-}
-
-void bulk_exec_release_report(struct bulk_exec_release_req *req){
-    req->reported = true;
-}
-
-bool bulk_exec_release_complete(struct bulk_exec_release_req *req){
-    flux_subprocess_t *p;
-
-    if(req->completed)
-        return true;
-
-    p = zlist_first (req->processes);
-    while (p) {
-        if(flux_subprocess_active(p)) 
-            return false;
-        p = zlist_next (req->processes);
-    }
-    req->completed = true;
-    return true;
-} 
-
-/* */
-
-int bulk_exec_release (struct bulk_exec *exec, char *id, const struct idset *ranks)
-{
-    flux_log (exec->h, LOG_DEBUG, "bulk_exec_release");
-
-    unsigned int rank;
-    bool found;
-    flux_subprocess_t *p;
-    struct bulk_exec_release_req *req = malloc(sizeof(struct bulk_exec_release_req));
-    req->id = strdup(id);
-    req->processes = zlist_new();
-    req->idset = idset_copy(ranks);
-    req->completed = false;
-    req->reported = false;
-    
-    rank = idset_first (ranks);
-    flux_log (exec->h, LOG_DEBUG, "bulk_exec_release: rank = %d", rank);
-    while (rank != IDSET_INVALID_ID) {
-        found = false;
-        p = zlist_first (exec->processes);
-        while (p) {
-            if(flux_subprocess_rank(p) == rank){
-                zlist_append(req->processes, p);
-                found = true;
-            }
-            p = zlist_next (exec->processes);
-        }
-        if(!found)
-            goto error;
-        rank = idset_next (ranks, rank);
-    }
-    flux_log (exec->h, LOG_DEBUG, "bulk_exec_release: adding reqs done");
-    if(bulk_exec_release_complete(req)){
-        /* TODO */
-        flux_log (exec->h, LOG_DEBUG, "bulk_exec_release: bulk_exec_release req is complete");
-        exec_exit_notify (exec);
-        
-    }
-    if(zlist_append (exec->release_reqs, req) < 0) {
-        flux_log_error (exec->h, "Failed to append release req");
-        goto error;
-    }
-
-    flux_log (exec->h, LOG_DEBUG, "bulk_exec_release done");
-    return 0;
-
-error:
-    free(req->id);
-    zlist_destroy(&req->processes);
-    free(req);
-    return -1;
-    
-}
-
 
 static void exec_add_completed (struct bulk_exec *exec, flux_subprocess_t *p)
 {
@@ -620,7 +531,6 @@ struct bulk_exec * bulk_exec_create (struct bulk_exec_ops *ops,
     exec->arg = arg;
     exec->processes = zlist_new ();
     exec->commands = zlist_new ();
-    exec->release_reqs = zlist_new();
     exec->exit_batch = idset_create (0, IDSET_FLAG_AUTOGROW);
     exec->max_start_per_loop = 1;
 

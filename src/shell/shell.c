@@ -75,8 +75,6 @@ static int parse_jobid (const char *optarg, flux_jobid_t *jobid)
     return 0;
 }
 
-// TODO
-
 static void task_completion_cb (struct shell_task *task, void *arg)
 {
     struct flux_shell *shell = arg;
