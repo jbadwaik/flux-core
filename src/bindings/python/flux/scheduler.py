@@ -798,6 +798,7 @@ class Scheduler(BrokerModule):
             R: The released resources.
             final (bool): True if this is the final free for the job.
         """
+        self.log(syslog.LOG_CRIT, f"sched.free "+str(R)+" "+str(final))
         self.resources.free(jobid, R, final)
 
     def cancel(self, jobid):
@@ -928,7 +929,7 @@ class Scheduler(BrokerModule):
     def _handle_dyn_alloc_request(self, msg):
         self.log(syslog.LOG_DEBUG, f"dyn_alloc_request callback called")
         try:
-            self.log(syslog.LOG_DEBUG, str(msg.payload))
+            self.log(syslog.LOG_CRIT, str(msg.payload))
             p = msg.payload
             data = p["data"]
             resp = {
