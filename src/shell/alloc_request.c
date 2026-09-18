@@ -32,6 +32,68 @@ struct alloc_ctx {
     const flux_msg_t *msg;
 };
 
+static void release_response_cb (flux_future_t *f, void *arg)
+{
+    return;
+}
+
+/* recives release request from client/pmix_plugin. 
+ * forwards release to job-exec  
+ */
+static void release_cb (flux_t *h, flux_msg_handler_t *mh,
+                     const flux_msg_t *msg, void *arg)
+{
+    json_t *resources = NULL;
+    flux_future_t *f;
+    char *alloc_id = NULL;
+
+    shell_debug ("received release request");
+
+
+
+
+    struct alloc_ctx *ctx = calloc(1, sizeof(*ctx));
+    ctx->h = h;
+    ctx->msg = flux_msg_incref(msg);
+
+
+    if(0 < flux_msg_unpack (msg,
+                         "{s:s s?:o}",
+                         "alloc_id", &alloc_id,
+                         "resources", &resources)){
+        
+        shell_warn ("error unpacking dynamic allocation request");
+        return;
+    }
+
+    shell_debug ("forwarding release request to job-exec");
+
+    /* TODO: get resource set from alloc_id */
+
+    /* Send release request to job-exec */
+    if( !(f = flux_rpc_pack(h, 
+                "job-exec.release", 
+                FLUX_NODEID_ANY, 
+                0, 
+                "{s:s s:O}",
+                "alloc_id", alloc_id,
+                "resources", resources)) 
+        || flux_future_then (f,
+                             -1,
+                             release_response_cb,
+                             (void *) ctx) < 0) 
+    {
+        if(f) flux_future_destroy (f);
+        goto release;
+
+    }
+    shell_debug ("forwarded release request to job-exec");
+
+release:
+    if(alloc_id) free(alloc_id);
+
+}
+
 /* receives RESPONSE from job manager for dynamic allocation request. 
  * forwards RESPONSE to client/pmix_plugin  
  */
@@ -146,6 +208,11 @@ static int alloc_request_init (flux_plugin_t *p,
                                     "dyn_alloc_request",
                                     dyn_alloc_request_cb,
                                     shell) < 0)
+        return -1;
+    if (flux_shell_service_register (shell,
+                                "release",
+                                release_cb,
+                                shell) < 0)
         return -1;
     return 0;
 }

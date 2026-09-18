@@ -360,19 +360,26 @@ static int jobinfo_respond_error (struct jobinfo *job,
 }
 
 static int jobinfo_send_release (struct jobinfo *job,
-                                 const struct idset *idset)
+                                 const struct idset *idset, bool final)
 {
     int rc;
     flux_t *h = job->ctx->h;
+    char *ranks;
     // XXX: idset ignored for now. Always release all resources
+    if(NULL == idset){
+        idset = resource_set_ranks(job->R);
+    }
+    ranks = idset_encode (idset, IDSET_FLAG_RANGE);
+
     rc = flux_respond_pack (h,
                             job->req,
                             "{s:I s:s s{s:s s:b}}",
                             "id", job->id,
                             "type", "release",
                             "data",
-                              "ranks", "all",
-                              "final", true);
+                              "ranks", ranks,
+                              "final", final);
+    free(ranks);
     return rc;
 }
 
@@ -980,6 +987,8 @@ void jobinfo_tasks_complete (struct jobinfo *job,
                              const struct idset *ranks,
                              int wait_status)
 {
+    const struct idset *job_ranks;
+    const struct idset *diff;
     assert (job->started == 1);
     if (wait_status > job->wait_status)
         job->wait_status = wait_status;
@@ -987,18 +996,28 @@ void jobinfo_tasks_complete (struct jobinfo *job,
     /* XXX: ranks ignored for now until partial release supported
      *  only call jobinfo_complete() once all tasks have completed.
      */
+    job_ranks = resource_set_ranks(job->R);
+    diff = idset_difference(job_ranks, ranks);
+    if(idset_count(diff) != 0){
+        flux_log (job->h, LOG_DEBUG, "jobinfo_tasks_complete send partial release");
+        jobinfo_send_release (job, NULL, false);
+        return;
+    }
+
     jobinfo_complete (job, ranks);
 
     if (jobinfo_finalize (job) < 0) {
         flux_log_error (job->h, "tasks_complete: jobinfo_finalize");
         jobinfo_decref (job);
     }
+
 }
 
 
 static int jobinfo_release (struct jobinfo *job)
 {
-    int rc = jobinfo_send_release (job, NULL);
+    int rc = jobinfo_send_release (job, NULL, true);
+
     if (rc < 0) {
         flux_log_error (job->ctx->h, "jobinfo_send_release");
         jobinfo_respond_error (job, errno, "job release error");
@@ -1916,6 +1935,53 @@ error:
         flux_log_error (h, "error responding to config-reload request");
 }
 
+static void release_cb (flux_t *h,
+                              flux_msg_handler_t *mh,
+                              const flux_msg_t *msg,
+                              void *arg)
+{
+    struct job_exec_ctx *ctx = arg;
+    struct exec_implementation *impl;
+    json_error_t err;
+    int i = 0;
+    char * alloc_id;
+    json_t *R;
+    struct resource_set *rset;
+    flux_log (h, LOG_DEBUG, "received release request");
+
+    
+    struct jobinfo *job = zhashx_first (ctx->jobs);
+
+    if(0 < flux_msg_unpack (msg,
+                         "{s:s s?:o}",
+                         "alloc_id", &alloc_id,
+                         "resources", &R)){
+        
+        flux_log (h, LOG_DEBUG, "error unpacking release request");
+        return;
+    }
+
+    if(! (rset = resource_set_create_fromjson (R, &err))){
+        flux_log (h, LOG_DEBUG, "error creating resource set for release");
+        return;
+    }
+
+    
+    while ((impl = implementations[i]) && impl->name) {
+        if (impl->release) {
+            if ((*impl->release) (job, alloc_id, rset) < 0)
+                return;
+        }
+        i++;
+    }
+    
+    flux_log (h, LOG_DEBUG, "handled release request");
+
+    //if (flux_respond (h, msg, NULL) < 0)
+    //    flux_log_error (h, "error responding to config-reload request");
+    return;
+}
+
 static const struct flux_msg_handler_spec htab[]  = {
     { FLUX_MSGTYPE_REQUEST, "job-exec.start", start_cb,     0 },
     { FLUX_MSGTYPE_EVENT,   "job-exception",  exception_cb, 0 },
@@ -1927,6 +1993,7 @@ static const struct flux_msg_handler_spec htab[]  = {
     { FLUX_MSGTYPE_REQUEST, "job-exec.expiration", expiration_cb, 0 },
     { FLUX_MSGTYPE_REQUEST, "job-exec.stats-get", stats_cb, 0 },
     { FLUX_MSGTYPE_REQUEST, "job-exec.config-reload", config_reload_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST, "job-exec.release", release_cb, 0 },
     FLUX_MSGHANDLER_TABLE_END
 };
 
