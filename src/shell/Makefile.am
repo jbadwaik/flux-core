@@ -250,6 +250,15 @@ test_mustache_t_LDADD = \
 test_mustache_t_LDFLAGS = \
 	$(test_ldflags)
 
+shell_plugindir = $(libdir)/flux/shell/plugins
+shell_plugin_LTLIBRARIES = plugins/partitioning.la
+plugins_partitioning_la_SOURCES = plugins/partitioning.c
+plugins_partitioning_la_LDFLAGS = \
+    -module \
+    -avoid-version
+plugins_partitioning_la_LIBADD = \
+    $(JANSSON_LIBS)
+
 
 .PHONY: link-shell-plugins clean-shell-plugins
 
