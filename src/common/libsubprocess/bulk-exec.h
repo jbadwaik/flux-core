@@ -15,8 +15,16 @@
 
 #include <flux/core.h>
 #include <flux/idset.h>
-
+#include "src/common/libczmqcontainers/czmq_containers.h"
 struct bulk_exec;
+
+struct bulk_exec_release_req {
+    char *id;
+    bool completed;
+    bool reported;
+    struct idset *idset;
+    zlist_t *processes;
+};
 
 typedef void (*exec_cb_f)   (struct bulk_exec *, void *arg);
 
@@ -113,5 +121,11 @@ const char *bulk_exec_service_name (struct bulk_exec *exec);
  */
 flux_subprocess_t *bulk_exec_get_subprocess (struct bulk_exec *exec,
                                              int rank);
+
+int bulk_exec_release (struct bulk_exec *exec, char *id, const struct idset *ranks);
+bool bulk_exec_release_complete(struct bulk_exec_release_req *req);
+bool bulk_exec_release_reported(struct bulk_exec_release_req *req);
+void bulk_exec_release_report(struct bulk_exec_release_req *req);
+zlist_t * bulk_exec_get_release_reqs(struct bulk_exec *exec);
 
 #endif /* !HAVE_JOB_EXEC_BULK_EXEC_H */

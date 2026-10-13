@@ -20,6 +20,68 @@ cd ${FLUX_PMIX_DIR}/t
 flux run -o verbose=2 -o pmi=pmix src/alloc
 ```
 
+```
+ prterun -np 2 --host n1:1,n2:1 flux start --setattr=log-stderr-level=7 --verbose=2 flux start -c ./bootstrap.toml "flux uri --remote \$FLUX_URI; sleep inf" &
+```
+with bootstrap.toml:
+```
+[bootstrap]
+curve_cert = "/opt/hpc/build/flux_pmix/t/src/tmp/curve.cert"
+
+default_port = 8050
+default_bind = "tcp://*:8050"
+default_connect = "tcp://%h:8050"
+
+hosts = [
+    { host = "n1" },
+    { host = "n2" },
+]
+```
+and cert:
+
+```
+mkdir -p /opt/hpc/build/flux_pmix/t/src/tmp
+flux keygen /opt/hpc/build/flux_pmix/t/src/tmp/curve.cert
+chmod 600 /opt/hpc/build/flux_pmix/t/src/tmp/curve.cert
+```
+
+Then export FLUX_URI (last line from flux start output)
+
+# multinode
+```
+prterun -np 2     --host n1:1,n2:1     flux start     --setattr=log-stderr-level=7     --config-path=bootstrap.toml -v     sleep infinity &
+
+flux uri pid:$(pidof -s flux-broker)
+
+export FLUX_URI=
+
+flux run -n 2 -o verbose=2 -o pmi=pmix ./alloc [extend/release]
+```
+
+```
+mkdir -p /tmp/flux
+flux keygen /tmp/flux/curve.cert
+chmod 600 /tmp/flux/curve.cert
+```
+
+```
+
+(flux_pmix) [mpiuser@n1 src]$ cat bootstrap.toml 
+[bootstrap]
+curve_cert = "/opt/hpc/build/flux_pmix/t/src/tmp/curve.cert"
+
+default_port = 8050
+default_bind = "tcp://*:8050"
+default_connect = "tcp://%h:8050"
+
+hosts = [
+    { host = "n1" },
+    { host = "n2" },
+]
+```
+
+
+
 
 ## Sequences:
 

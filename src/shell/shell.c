@@ -97,6 +97,8 @@ static void task_completion_cb (struct shell_task *task, void *arg)
         shell_log_errno ("shell.finish");
 }
 
+
+
 int flux_shell_setopt (flux_shell_t *shell,
                        const char *name,
                        const char *json_str)
@@ -111,6 +113,10 @@ int flux_shell_setopt (flux_shell_t *shell,
     if (!(o = json_loads (json_str, JSON_DECODE_ANY, &err)))
         return -1;
     return json_object_set_new (shell->info->jobspec->options, name, o);
+}
+
+flux_jobid_t flux_shell_get_jobid(flux_shell_t *shell){
+    return shell->jobid;
 }
 
 int flux_shell_setopt_pack (flux_shell_t *shell,

@@ -234,23 +234,30 @@ class FIFOScheduler(Scheduler):
         return True
 
     def _handle_dyn_alloc_request(self, msg):
+        self.log(syslog.LOG_CRIT, f"_handle_dyn_alloc_request")
         p = msg.payload
         jobid = p["jobid"]
-        jobspec = p["spec_add"]
-        try:
-            rr = self.resources.parse_resource_request(jobspec)
-            R = self._resources.alloc_add(jobid, rr)
-            if not isinstance(R, dict):
-                R = R.to_dict()
-            self.dyn_alloc_success(msg, R)
-        except InsufficientResources:
-            self.dyn_alloc_deny(msg)
-        except InfeasibleRequest as exc:
-            # TODO: log something
-            self.dyn_alloc_deny(msg)
-        except Exception as exc:
-            self.log(syslog.LOG_ERR, f"alloc-add callback raised: {exc}")
-            self.stop_error()
+        jobspec_add = p.get("spec_add", None)
+        jobspec_sub = p.get("spec_sub", None)
+        if None != jobspec_add:
+            try:
+                rr = self.resources.parse_resource_request(jobspec_add)
+                R = self._resources.alloc_add(jobid, rr)
+                if not isinstance(R, dict):
+                    R = R.to_dict()
+                self.dyn_alloc_success(msg, R)
+            except InsufficientResources:
+                self.dyn_alloc_deny(msg)
+            except InfeasibleRequest as exc:
+                # TODO: log something
+                self.dyn_alloc_deny(msg)
+            except Exception as exc:
+                self.log(syslog.LOG_ERR, f"alloc-add callback raised: {exc}")
+                self.stop_error()
+        elif None != jobspec_sub:
+            self.log(syslog.LOG_CRIT, f"dyn_alloc_shrink_dummy: START") 
+            self.dyn_alloc_shrink_dummy(msg, jobspec_sub)
+            self.log(syslog.LOG_CRIT, f"dyn_alloc_shrink_dummy DONE")
 
 def mod_main(h, *args):
     FIFOScheduler(h, *args).run()

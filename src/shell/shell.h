@@ -36,6 +36,8 @@ flux_t * flux_shell_get_flux (flux_shell_t *shell);
 
 /* flux_shell_t interface */
 
+flux_jobid_t flux_shell_get_jobid(flux_shell_t *shell);
+
 int flux_shell_aux_set (flux_shell_t *shell,
                         const char *name,
                         void *aux,
