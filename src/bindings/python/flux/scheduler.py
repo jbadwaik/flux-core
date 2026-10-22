@@ -738,6 +738,11 @@ class Scheduler(BrokerModule):
         resp = {"jobid": msg.payload["jobid"], "type": 0, "R": R_dict}
         self.handle.respond(msg, resp)
 
+    def dyn_alloc_shrink_dummy(self, msg, jobspec_sub):
+        # TODO: Actually determine resources to release 
+        resp = {"jobid": msg.payload["jobid"], "type": 0, "R": {}}
+        self.handle.respond(msg, resp)
+
     def dyn_alloc_deny(self, msg, note=None):
         """Send an alloc denial response.  Typically called via :meth:`AllocRequest.deny`.
 
@@ -745,7 +750,7 @@ class Scheduler(BrokerModule):
             msg: The alloc request :class:`~flux.message.Message`.
             note (str, optional): Human-readable reason for the denial.
         """
-        resp = {"job id": msg.payload["job id"], "type": 1}
+        resp = {"jobid": msg.payload["jobid"], "type": 1}
         if note is not None:
             resp["note"] = note
         self.handle.respond(msg, resp)
@@ -868,6 +873,7 @@ class Scheduler(BrokerModule):
             R: The released resources.
             final (bool): True if this is the final free for the job.
         """
+        self.log(syslog.LOG_CRIT, f"sched.free "+str(R)+" "+str(final))
         self.resources.free(jobid, R, final)
 
     def cancel(self, jobid):
@@ -1024,7 +1030,9 @@ class Scheduler(BrokerModule):
     def _handle_free(self, msg):
         try:
             p = msg.payload
+            self.log(syslog.LOG_ERR, f"free " + str(p["R"]))
             R = ResourcePool(p["R"])
+            self.log(syslog.LOG_ERR, f"Calling self.free")
             self.free(p["id"], R, final=p.get("final", False))
             self._request_schedule()
         except Exception as exc:
