@@ -16,6 +16,7 @@ import math
 import numbers
 import os
 import pathlib
+import re
 import threading
 from types import SimpleNamespace
 
@@ -125,6 +126,31 @@ def _validate_hosts(hosts):
             raise ValueError(f"host constraint contains invalid hosts: {exc}")
 
 
+# Comparison operator followed by a strict decimal number: no whitespace,
+# nan/inf, hex or underscores.
+_COMPARISON_VALUE = re.compile(
+    r"(?:<=?|>=?)(?P<number>[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)"
+)
+
+
+def _is_comparison(args):
+    """True if a constraint's values look like a comparison, e.g. ["<400"]"""
+    return bool(args) and isinstance(args[0], str) and args[0][:1] in ("<", ">")
+
+
+def _validate_comparison(args):
+    """
+    Validate a numeric comparison constraint, e.g. {"tdp_power": ["<400"]}.
+    The constraint operator is the attribute name. The single value is an
+    operator (<, <=, >, >=) followed by a number.
+    """
+    if len(args) != 1 or not isinstance(args[0], str):
+        raise TypeError("comparison constraint requires a single string value")
+    match = _COMPARISON_VALUE.fullmatch(args[0])
+    if not match or not math.isfinite(float(match["number"])):
+        raise ValueError(f"comparison value '{args[0]}' is not a number")
+
+
 def _validate_constraint_op(operator, args):
     if not isinstance(operator, str):
         raise TypeError(f"constraint operation {operator} is not a string")
@@ -142,6 +168,8 @@ def _validate_constraint_op(operator, args):
     elif operator in ["ranks"]:
         for ranks in args:
             idset.decode(ranks)
+    elif _is_comparison(args):
+        _validate_comparison(args)
     else:
         raise TypeError(f"unknown constraint operator '{operator}'")
 

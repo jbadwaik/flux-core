@@ -946,5 +946,92 @@ class TestFromNestCommand(unittest.TestCase):
         self.assertEqual(bopts, ["-Sfoo"])
 
 
+class TestConstraintValidation(unittest.TestCase):
+    """Jobspec validation of attributes.system.constraints (RFC 31)."""
+
+    def _jobspec_with(self, constraints):
+        """Construct a Jobspec carrying `constraints`; validation raises."""
+        spec = json.loads(BASIC_JOBSPEC)
+        spec["attributes"]["system"]["constraints"] = constraints
+        return Jobspec.from_yaml_stream(json.dumps(spec))
+
+    def test_01_comparison_accepted(self):
+        """A comparison constraint is accepted."""
+        self._jobspec_with({"tdp_power": ["<400"]})
+
+    def test_02_comparison_operators_accepted(self):
+        """All four comparison operators are accepted."""
+        # No subTest: pycotap does not report subTest failures in TAP output.
+        for value in ("<400", "<=400", ">400", ">=400"):
+            self._jobspec_with({"tdp_power": [value]})
+
+    def test_03_comparison_number_formats_accepted(self):
+        """Negative, fractional and exponent values are accepted."""
+        for value in ("<-5.5", ">=0", "<1e3", ">.5", "<400.0"):
+            self._jobspec_with({"tdp_power": [value]})
+
+    def test_04_comparison_range_accepted(self):
+        """A range is a comparison pair combined with 'and'."""
+        self._jobspec_with({"and": [{"tdp_power": [">=100"]}, {"tdp_power": ["<400"]}]})
+
+    def test_05_comparison_nested_accepted(self):
+        """Comparisons are accepted under not/or, next to other operators."""
+        self._jobspec_with({"not": [{"tdp_power": [">400"]}]})
+        self._jobspec_with({"or": [{"tdp_power": ["<100"]}, {"properties": ["gpu"]}]})
+
+    def test_06_existing_operators_still_accepted(self):
+        """Regression: operators that are not comparisons are unchanged."""
+        for constraints in (
+            {"properties": ["gpu"]},
+            {"ranks": ["0"]},
+            {"and": [{"properties": ["gpu"]}, {"ranks": ["0"]}]},
+        ):
+            self._jobspec_with(constraints)
+
+    def test_07_unknown_operator_rejected(self):
+        """An operator whose value has no comparison prefix is unknown."""
+        for constraints in (
+            {"foo": ["bar"]},
+            {"propertis": ["gpu"]},  # misspelt known operator
+            {"tdp_power": []},
+        ):
+            with self.assertRaisesRegex(TypeError, "unknown constraint operator"):
+                self._jobspec_with(constraints)
+
+    def test_08_comparison_not_string_rejected(self):
+        """Non-string comparison values are not comparisons."""
+        for constraints in ({"tdp_power": [400]}, {"tdp_power": [["<400"]]}):
+            with self.assertRaises(TypeError):
+                self._jobspec_with(constraints)
+
+    def test_09_comparison_multiple_values_rejected(self):
+        """A comparison takes a single value; a range needs 'and'."""
+        with self.assertRaisesRegex(TypeError, "single"):
+            self._jobspec_with({"tdp_power": ["<400", "<500"]})
+
+    def test_10_comparison_not_a_number_rejected(self):
+        """The value after the operator must be a number."""
+        for value in ("<", "<abc", "<400x", "<==", "<400 500"):
+            with self.assertRaisesRegex(ValueError, "number"):
+                self._jobspec_with({"tdp_power": [value]})
+
+    def test_11_comparison_non_finite_rejected(self):
+        """nan and inf never match, so they are rejected."""
+        for value in ("<nan", "<inf", "<-inf", ">=infinity"):
+            with self.assertRaisesRegex(ValueError, "number"):
+                self._jobspec_with({"tdp_power": [value]})
+
+    def test_12_comparison_whitespace_rejected(self):
+        """Whitespace around the number is rejected."""
+        for value in ("< 400", "<400 ", "<\t400"):
+            with self.assertRaisesRegex(ValueError, "number"):
+                self._jobspec_with({"tdp_power": [value]})
+
+    def test_13_comparison_bad_operator_rejected(self):
+        """'=<' is not an operator, and does not start with '<' or '>'."""
+        with self.assertRaisesRegex(TypeError, "unknown constraint operator"):
+            self._jobspec_with({"tdp_power": ["=<400"]})
+
+
 if __name__ == "__main__":
     unittest.main(testRunner=TAPTestRunner())
