@@ -45,6 +45,13 @@
      Require matching resources to be on the specified broker ranks in
      RFC 22 Idset String Representation.
 
+   *NAME*
+     A numeric comparison against the resource attribute *NAME*, written
+     ``NAME:OPvalue`` where *OP* is one of ``<``, ``<=``, ``>`` or ``>=``,
+     e.g. ``cpu_freq:>=2000`` or ``tdp_power:<400``. Only one operand is
+     allowed; use AND to express a range. Matching depends on scheduler
+     support.
+
    Examples:
 
    ``a b c``, ``a&b&c``, or ``a,b,c``
@@ -67,5 +74,8 @@
 
    ``rank:0``
       Require broker rank 0.
+
+   ``cpu_freq:>=2000 cpu_freq:<3000``
+      Require attribute cpu_freq of at least 2000 and less than 3000.
 
 
