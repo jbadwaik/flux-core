@@ -147,6 +147,18 @@ test_expect_success 'constraints plugin adds queue constraint' '
 	jq -e ".data.attributes.system.constraints.properties|any(.==\"foo\")"\
 	   < constraint-addqueue.out
 '
+test_expect_success 'constraints plugin combines queue and comparison constraint' '
+	flux run --env=-* --dry-run --requires=tdp_power:"<400" \
+	  --queue=debug hostname \
+	   | flux job-frobnicator --jobspec-only --plugins=constraints \
+	   > constraint-comparison.out &&
+	jq -e ".data.attributes.system.constraints == \
+	    {and: [{tdp_power: [\"<400\"]}, {properties: [\"debug\"]}]}" \
+	   < constraint-comparison.out &&
+	jq -c .data < constraint-comparison.out \
+	   | flux job-validator --jobspec-only --plugins=jobspec \
+	   | jq -e ".errnum == 0"
+'
 test_expect_success 'constraints plugin works with no configured queues' '
 	cp /dev/null conf.d/conf.toml &&
 	flux config reload &&
