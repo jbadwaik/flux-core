@@ -51,6 +51,55 @@ test_expect_success 'jobspec validator rejects invalid hostlist/ranks' '
 test_expect_success 'jobspec validator rejects invalid constraint operation' '
 	test_must_fail flux submit -n1 --requires=foo:bar hostname
 '
+# Comparison constraints, e.g. --requires=power:'<400'. Only the jobspec
+# validator is loaded: sched-simple (feasibility) does not know comparisons.
+# Jobs are submitted on hold so that nothing is scheduled.
+test_expect_success 'reload ingest with only the jobspec validator' '
+	flux module reload -f job-ingest validator-plugins=jobspec
+'
+test_expect_success 'jobspec validator accepts comparison constraints' '
+	id=$(flux submit --urgency=hold --requires=power:"<400" hostname) &&
+	flux cancel $id
+'
+test_expect_success 'jobspec validator accepts a comparison range' '
+	id=$(flux submit --urgency=hold \
+		--requires=power:">=100" --requires=power:"<400" hostname) &&
+	flux cancel $id
+'
+test_expect_success 'jobspec validator rejects non-numeric comparison value' '
+	test_must_fail flux submit --urgency=hold --requires=power:"<abc" \
+		hostname 2>notnum.err &&
+	test_debug "cat notnum.err" &&
+	grep "not a number" notnum.err
+'
+test_expect_success 'jobspec validator rejects non-numeric comparison value (2)' '
+	test_must_fail flux submit --urgency=hold --requires=power:"<2<1" \
+		hostname 2>notnum.err &&
+	test_debug "cat notnum.err" &&
+	grep "not a number" notnum.err
+'
+test_expect_success 'jobspec validator rejects nan comparison value' '
+	test_must_fail flux submit --urgency=hold --requires=power:"<nan" \
+		hostname 2>nan.err &&
+	test_debug "cat nan.err" &&
+	grep "not a number" nan.err
+'
+test_expect_success 'jobspec validator rejects comma-separated comparison values' '
+	test_must_fail flux submit --urgency=hold --requires=power:"<1,<2" \
+		hostname 2>comma.err &&
+	test_debug "cat comma.err" &&
+	grep "not a number" comma.err
+'
+test_expect_success 'flux submit: --requires with a comparison sets constraints' '
+	flux submit --dry-run --requires=power:"<400" hostname | \
+		jq -e ".attributes.system.constraints == {power: [\"<400\"]}"
+'
+test_expect_success 'jobspec validator rejects invalid constraint operation' '
+	test_must_fail flux submit -n1 --requires=foo:bar hostname
+'
+test_expect_success 'reload ingest with feasibility,jobspec validators again' '
+	flux module reload -f job-ingest validator-plugins=jobspec,feasibility
+'
 test_expect_success 'flux bulksubmit: --requires works with scheduler' '
 	flux bulksubmit --wait --log=job.{}.id -n1 --requires={} \
 		flux getattr rank \
