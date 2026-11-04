@@ -84,6 +84,8 @@ struct inout test_inputs[] = {
     { "[0-]",           0,          NULL },
     { "-5",             0,          NULL },
     { "[-5]",           0,          NULL },
+    { "4294967296",     0,          NULL },
+    { "1,5294967296",   0,          NULL },
 
     { NULL, 0, NULL },
 };
